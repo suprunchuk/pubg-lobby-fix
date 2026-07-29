@@ -45,6 +45,7 @@ jobs:
       # -race needs a C compiler (CGO). windows-latest has no gcc by default;
       # installing MinGW just for race slows CI a lot for this small tool.
       - name: Run tests
+        shell: bash
         run: go test -v -shuffle=on -coverprofile=coverage.out ./...
 
       - name: Upload coverage
