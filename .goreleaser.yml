@@ -38,6 +38,8 @@ checksum:
 changelog:
   use: github
   sort: asc
+  # Only GitHub @login — never Name <email>
+  format: "{{ .SHA }}: {{ .Message }}{{ if .Logins }} ({{ .Logins | englishJoin }}){{ end }}"
   filters:
     exclude:
       - "^docs"
