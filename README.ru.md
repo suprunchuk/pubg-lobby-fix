@@ -5,7 +5,6 @@
 [![Build Status](https://img.shields.io/github/actions/workflow/status/suprunchuk/pubg-lobby-fix/test.yml?branch=main&label=tests)](https://github.com/suprunchuk/pubg-lobby-fix/actions/workflows/test.yml)
 [![Release](https://img.shields.io/github/v/release/suprunchuk/pubg-lobby-fix?display_name=tag)](https://github.com/suprunchuk/pubg-lobby-fix/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/suprunchuk/pubg-lobby-fix/total)](https://github.com/suprunchuk/pubg-lobby-fix/releases)
-[![Go Report Card](https://goreportcard.com/badge/github.com/suprunchuk/pubg-lobby-fix)](https://goreportcard.com/report/github.com/suprunchuk/pubg-lobby-fix)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)](#требования)
 
 **Языки:** [English](./README.md) · Русский
