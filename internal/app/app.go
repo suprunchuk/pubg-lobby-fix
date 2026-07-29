@@ -6,12 +6,12 @@ import (
 	"log/slog"
 	"runtime"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
-	"pubg-lobby-fix/internal/hotkey"
-	"pubg-lobby-fix/internal/process"
-	"pubg-lobby-fix/internal/tcp"
+	"github.com/suprunchuk/pubg-lobby-fix/internal/hotkey"
+	"github.com/suprunchuk/pubg-lobby-fix/internal/process"
+	"github.com/suprunchuk/pubg-lobby-fix/internal/tcp"
 )
 
 // Config holds runtime options for the monitor.
@@ -62,8 +62,7 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		errCh <- hotkey.Listen(ctx, binding, presses)
 	}()
 
-	var mu sync.Mutex
-	busy := false
+	var busy atomic.Bool
 
 	for {
 		select {
@@ -76,23 +75,16 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 			}
 			return ctx.Err()
 		case <-presses:
-			mu.Lock()
-			if busy {
-				mu.Unlock()
+			if !busy.CompareAndSwap(false, true) {
 				log.Warn("already closing connections, ignoring hotkey")
 				continue
 			}
-			busy = true
-			mu.Unlock()
 
 			log.Info("hotkey pressed, closing lobby connections")
 			if err := closeLobby(cfg, log); err != nil {
 				log.Error("close failed", "err", err)
 			}
-
-			mu.Lock()
-			busy = false
-			mu.Unlock()
+			busy.Store(false)
 		}
 	}
 }

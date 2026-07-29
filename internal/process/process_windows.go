@@ -1,6 +1,7 @@
 package process
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"unsafe"
@@ -19,14 +20,14 @@ func FindByName(names ...string) (map[uint32]string, error) {
 		}
 	}
 	if len(want) == 0 {
-		return nil, fmt.Errorf("no process names provided")
+		return nil, errors.New("no process names provided")
 	}
 
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return nil, fmt.Errorf("CreateToolhelp32Snapshot: %w", err)
 	}
-	defer windows.CloseHandle(snap)
+	defer func() { _ = windows.CloseHandle(snap) }()
 
 	var entry windows.ProcessEntry32
 	entry.Size = uint32(unsafe.Sizeof(entry))

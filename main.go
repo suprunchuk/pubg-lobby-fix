@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"pubg-lobby-fix/internal/app"
+	"github.com/suprunchuk/pubg-lobby-fix/internal/app"
 )
 
 // Set by GoReleaser via -ldflags.
@@ -85,7 +85,8 @@ func splitCSV(s string) []string {
 
 func init() {
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), `pubg-lobby-fix — force-close PUBG (TslGame) TCP sockets to skip the black lobby screen.
+		out := flag.CommandLine.Output()
+		_, _ = fmt.Fprintf(out, `pubg-lobby-fix — force-close PUBG (TslGame) TCP sockets to skip the black lobby screen.
 
 Usage:
   pubg-lobby-fix [flags]
@@ -93,7 +94,7 @@ Usage:
 Flags:
 `)
 		flag.PrintDefaults()
-		fmt.Fprintf(flag.CommandLine.Output(), `
+		_, _ = fmt.Fprintf(out, `
 Examples:
   pubg-lobby-fix                      # wait for Ctrl+Shift+L
   pubg-lobby-fix -hotkey f9           # use F9 instead

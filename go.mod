@@ -1,4 +1,4 @@
-module pubg-lobby-fix
+module github.com/suprunchuk/pubg-lobby-fix
 
 go 1.26.5
 

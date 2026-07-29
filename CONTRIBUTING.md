@@ -6,7 +6,6 @@ Thanks for your interest in the project.
 
 - Windows 10/11 (the code depends on WinAPI)
 - Go **1.26+** (see `go.mod`)
-- [golangci-lint](https://golangci-lint.run/) (optional, for local linting)
 
 ## Quick start
 
@@ -15,16 +14,14 @@ git clone https://github.com/suprunchuk/pubg-lobby-fix.git
 cd pubg-lobby-fix
 
 go build -o pubg-lobby-fix.exe .
-go test -race -shuffle=on ./...
-go vet ./...
-golangci-lint run ./...
+go test -shuffle=on ./...
 ```
 
 ## Development workflow
 
 1. Fork → branch `feat/...` / `fix/...`
 2. Make changes and add tests where they help
-3. Run `go test -race ./...` and the linter
+3. Run `go test ./...`
 4. Open a PR against `main`
 
 Prefer [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `refactor:` — release changelogs are built from them.

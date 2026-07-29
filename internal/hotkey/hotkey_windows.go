@@ -2,6 +2,7 @@ package hotkey
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -20,6 +21,8 @@ const (
 
 	wmHotkey = 0x0312
 	wmQuit   = 0x0012
+
+	errHotkeyAlreadyRegistered syscall.Errno = 1409
 )
 
 var (
@@ -54,7 +57,7 @@ type Binding struct {
 func Parse(s string) (Binding, error) {
 	s = strings.TrimSpace(strings.ToLower(s))
 	if s == "" {
-		return Binding{}, fmt.Errorf("empty hotkey")
+		return Binding{}, errors.New("empty hotkey")
 	}
 
 	parts := strings.Split(s, "+")
@@ -134,7 +137,7 @@ func Listen(ctx context.Context, b Binding, ch chan<- struct{}) error {
 
 	r0, _, e := procRegisterHotKey.Call(0, uintptr(b.ID), uintptr(b.Mods), uintptr(b.VK))
 	if r0 == 0 {
-		if errno, ok := e.(syscall.Errno); ok && errno == 1409 {
+		if errors.Is(e, errHotkeyAlreadyRegistered) {
 			return fmt.Errorf("hotkey %q already registered by another app", b.Display)
 		}
 		return fmt.Errorf("RegisterHotKey %q: %w", b.Display, e)
@@ -146,12 +149,10 @@ func Listen(ctx context.Context, b Binding, ch chan<- struct{}) error {
 	tid, _, _ := procGetCurrentThreadId.Call()
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		<-ctx.Done()
 		_, _, _ = procPostThreadMessage.Call(tid, wmQuit, 0, 0)
-	}()
+	})
 
 	var m msg
 	for {

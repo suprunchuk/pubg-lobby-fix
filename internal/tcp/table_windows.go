@@ -94,7 +94,7 @@ func extendedTCPTable() ([]mibTCPRowOwnerPID, error) {
 
 	rows := make([]mibTCPRowOwnerPID, 0, numEntries)
 	offset := uintptr(4)
-	for i := uint32(0); i < numEntries; i++ {
+	for range numEntries {
 		row := *(*mibTCPRowOwnerPID)(unsafe.Pointer(&buf[offset]))
 		rows = append(rows, row)
 		offset += rowSize

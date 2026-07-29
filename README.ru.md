@@ -3,7 +3,6 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/suprunchuk/pubg-lobby-fix)](https://go.dev/)
 [![License: MIT](https://img.shields.io/github/license/suprunchuk/pubg-lobby-fix)](./LICENSE)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/suprunchuk/pubg-lobby-fix/test.yml?branch=main&label=tests)](https://github.com/suprunchuk/pubg-lobby-fix/actions/workflows/test.yml)
-[![Lint](https://img.shields.io/github/actions/workflow/status/suprunchuk/pubg-lobby-fix/lint.yml?branch=main&label=lint)](https://github.com/suprunchuk/pubg-lobby-fix/actions/workflows/lint.yml)
 [![Release](https://img.shields.io/github/v/release/suprunchuk/pubg-lobby-fix?display_name=tag)](https://github.com/suprunchuk/pubg-lobby-fix/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/suprunchuk/pubg-lobby-fix/total)](https://github.com/suprunchuk/pubg-lobby-fix/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/suprunchuk/pubg-lobby-fix)](https://goreportcard.com/report/github.com/suprunchuk/pubg-lobby-fix)
@@ -206,12 +205,10 @@ cd pubg-lobby-fix
 go build -o pubg-lobby-fix.exe .
 ```
 
-### Тесты и линт
+### Тесты
 
 ```powershell
-go test -race -shuffle=on ./...
-go vet ./...
-golangci-lint run ./...   # если установлен golangci-lint
+go test -shuffle=on ./...
 ```
 
 ### Установка через `go install`
@@ -233,7 +230,7 @@ pubg-lobby-fix/
 │   ├── process/            # поиск PID по имени
 │   └── hotkey/             # RegisterHotKey + message loop
 ├── LEGACY_DOT_NET/         # исходный C#/WPF прототип
-└── .github/workflows/      # test, lint, security, release
+└── .github/workflows/      # test, security, release
 ```
 
 ---
@@ -275,8 +272,7 @@ git push origin v1.0.1
 
 | Workflow | Что проверяет |
 | -------- | ------------- |
-| [test.yml](./.github/workflows/test.yml) | `go test -race`, coverage |
-| [lint.yml](./.github/workflows/lint.yml) | `go vet`, golangci-lint |
+| [test.yml](./.github/workflows/test.yml) | `go test`, coverage |
 | [security.yml](./.github/workflows/security.yml) | govulncheck, gosec, CodeQL, Bearer |
 | [release.yml](./.github/workflows/release.yml) | релиз по тегу |
 
