@@ -1,0 +1,75 @@
+version: 2
+
+project_name: pubg-lobby-fix
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: pubg-lobby-fix
+    main: .
+    binary: pubg-lobby-fix
+    env:
+      - CGO_ENABLED=0
+    # Tool uses WinAPI (SetTcpEntry / RegisterHotKey) — Windows only
+    goos:
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - README.ru.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs"
+      - "^test"
+      - "^ci"
+      - "^chore\\(deps\\)"
+      - "^style"
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))?!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\(.+\))?!?:.+$'
+      order: 1
+    - title: Refactors
+      regexp: '^.*?refactor(\(.+\))?!?:.+$'
+      order: 2
+    - title: Others
+      order: 999
+
+release:
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"
+  footer: |
+    ## Installation
+
+    Download `pubg-lobby-fix_Windows_x86_64.zip` (or ARM64), extract, run **as Administrator**.
+
+    ```text
+    pubg-lobby-fix.exe -hotkey ctrl+shift+l
+    ```
+
+    ---
+    Built with GoReleaser.
