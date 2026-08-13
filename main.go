@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/suprunchuk/pubg-lobby-fix/internal/app"
+	"github.com/suprunchuk/pubg-lobby-fix/internal/update"
 )
 
 // Set by GoReleaser via -ldflags.
@@ -59,6 +60,10 @@ func run() int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+
+	if !*once && !*list {
+		update.MaybeOffer(ctx, version, os.Stdin, os.Stdout, log)
+	}
 
 	if err := app.Run(ctx, cfg, log); err != nil {
 		if ctx.Err() != nil {
