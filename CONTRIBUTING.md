@@ -5,7 +5,7 @@ Thanks for your interest in the project.
 ## Prerequisites
 
 - Windows 10/11 (the code depends on WinAPI)
-- Go **1.26+** (see `go.mod`)
+- Go **1.27+** (see `go.mod`)
 
 ## Quick start
 

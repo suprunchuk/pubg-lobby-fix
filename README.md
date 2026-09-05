@@ -127,7 +127,7 @@ The game process is **not** killed. Only TCP control blocks for the selected pro
 | OS | **Windows 10 / 11** only (`iphlpapi.dll`, `user32.dll`) |
 | Privileges | Administrator (for `SetTcpEntry`) |
 | Game | Running PUBG client (`TslGame.exe`) |
-| Build | Go **1.26+** (only if you build yourself) |
+| Build | Go **1.27+** (only if you build yourself) |
 
 Linux and macOS are not supported — the required WinAPI is missing there.
 
@@ -193,7 +193,7 @@ pubg-lobby-fix [flags]
 ### Prerequisites
 
 - Windows
-- [Go 1.26+](https://go.dev/dl/)
+- [Go 1.27+](https://go.dev/dl/)
 - Git
 
 ### Build

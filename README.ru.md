@@ -127,7 +127,7 @@ level=INFO msg="run as administrator — SetTcpEntry needs elevation"
 | ОС | **Windows 10 / 11** only (нужны `iphlpapi.dll`, `user32.dll`) |
 | Права | Администратор (для `SetTcpEntry`) |
 | Игра | Запущенный клиент PUBG (`TslGame.exe`) |
-| Сборка | Go **1.26+** (только если собираешь сам) |
+| Сборка | Go **1.27+** (только если собираешь сам) |
 
 Linux и macOS не поддерживаются: на них нет нужного WinAPI.
 
@@ -193,7 +193,7 @@ pubg-lobby-fix [flags]
 ### Предусловия
 
 - Windows
-- [Go 1.26+](https://go.dev/dl/)
+- [Go 1.27+](https://go.dev/dl/)
 - Git
 
 ### Сборка
