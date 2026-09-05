@@ -51,7 +51,17 @@ func run() int {
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	// Log timestamps like "2026-09-05 12:42:53" — the RFC3339 default is
+	// noisy, and a raw "+03:00" offset scares non-developers.
+	logTime := func(groups []string, a slog.Attr) slog.Attr {
+		if len(groups) == 0 && a.Key == slog.TimeKey {
+			if t, ok := a.Value.Any().(time.Time); ok {
+				a.Value = slog.StringValue(t.Format("2006-01-02 15:04:05"))
+			}
+		}
+		return a
+	}
+	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level, ReplaceAttr: logTime}))
 	slog.SetDefault(log)
 
 	// Remove the binary a previous self-update renamed out of the way.
