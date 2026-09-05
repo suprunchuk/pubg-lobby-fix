@@ -67,7 +67,7 @@ release:
   footer: |
     ## Installation
 
-    Download `pubg-lobby-fix_Windows_x86_64.zip` (or ARM64), extract, run **as Administrator**.
+    Download `pubg-lobby-fix_{{ .Version }}_windows_amd64.zip` (or `_windows_arm64.zip`), extract, run **as Administrator**.
 
     ```text
     pubg-lobby-fix.exe -hotkey ctrl+shift+l

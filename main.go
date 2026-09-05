@@ -34,6 +34,7 @@ func run() int {
 		rounds      = flag.Int("rounds", 4, "close+verify rounds before falling back to a traffic block")
 		block       = flag.Duration("block", 10*time.Second, "WFP fallback: block all game traffic for this long when some connections survive (0 disables)")
 		noElevate   = flag.Bool("no-elevate", false, "do not relaunch with administrator rights")
+		noUpdate    = flag.Bool("no-update", false, "disable automatic self-update")
 		once        = flag.Bool("once", false, "close connections once and exit")
 		list        = flag.Bool("list", false, "list TslGame TCP connections and exit")
 		verbose     = flag.Bool("v", false, "verbose (debug) logging")
@@ -52,6 +53,9 @@ func run() int {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(log)
+
+	// Remove the binary a previous self-update renamed out of the way.
+	update.CleanupOld()
 
 	// SetTcpEntry is rejected without elevation, so ask for it up front.
 	// The elevated copy takes over and this process exits.
@@ -78,8 +82,19 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if !*once && !*list {
-		update.MaybeOffer(ctx, version, os.Stdin, os.Stdout, log)
+	if !*noUpdate && !*once && !*list && os.Getenv(update.EnvUpdated) != version {
+		newVersion, err := update.MaybeAuto(ctx, version, log)
+		switch {
+		case err != nil:
+			log.Warn("auto-update failed — download it manually from https://github.com/suprunchuk/pubg-lobby-fix/releases/latest", "err", err)
+		case newVersion != "":
+			log.Info("restarting with the new version", "version", newVersion)
+			if err := update.Restart(newVersion); err != nil {
+				log.Error("update installed but the restart failed — start the program again manually", "err", err)
+				return 1
+			}
+			return 0
+		}
 	}
 
 	if err := app.Run(ctx, cfg, log); err != nil {
@@ -127,6 +142,9 @@ Closing sockets needs administrator rights: the tool relaunches itself
 elevated through UAC unless -no-elevate is given. Connections that survive
 SetTcpEntry (e.g. IPv6) are handled by a short full-traffic block of the
 game executables via the Windows Filtering Platform.
+
+On start the tool downloads and installs newer releases by itself
+(disable with -no-update).
 `)
 	}
 }

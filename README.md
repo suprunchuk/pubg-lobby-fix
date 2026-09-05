@@ -52,6 +52,9 @@ When a PUBG match ends, **Exit to Lobby** often leaves you on a black screen for
 > [!IMPORTANT]
 > Closing sockets needs **administrator** rights. If you start the tool unelevated, it relaunches itself through a UAC prompt automatically (opt out with `-no-elevate`).
 
+> [!TIP]
+> The tool keeps itself up to date: on start it downloads the latest release, verifies its sha256 checksum, swaps the executable and restarts into the new version. Opt out with `-no-update`.
+
 ### 1. Download a release
 
 Open the **[Latest Release](https://github.com/suprunchuk/pubg-lobby-fix/releases/latest)** and grab the zip for your CPU:
@@ -167,6 +170,7 @@ pubg-lobby-fix [flags]
 | `-rounds` | `4` | Close + verify rounds before the traffic block fallback |
 | `-block` | `10s` | WFP fallback: block all game traffic for this long when some connections survive (`0` disables) |
 | `-no-elevate` | `false` | Do not relaunch with administrator rights |
+| `-no-update` | `false` | Disable automatic self-update on start |
 | `-once` | `false` | Close connections once and exit |
 | `-list` | `false` | List sockets only; do not close |
 | `-version` | — | Version / commit / build date |

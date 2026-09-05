@@ -1,7 +1,6 @@
 package update
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,25 +16,47 @@ import (
 
 const checkTimeout = 3 * time.Second
 
-var (
-	apiURL = "https://api.github.com/repos/suprunchuk/pubg-lobby-fix/releases/latest"
-	opener = openURL
-)
+var apiURL = "https://api.github.com/repos/suprunchuk/pubg-lobby-fix/releases/latest"
 
 // Release is the subset of GitHub's release JSON we need.
 type Release struct {
-	TagName string `json:"tag_name"`
-	HTMLURL string `json:"html_url"`
+	TagName string  `json:"tag_name"`
+	HTMLURL string  `json:"html_url"`
+	Assets  []Asset `json:"assets"`
 }
 
-// MaybeOffer checks GitHub for a newer release and, if found, asks whether to
-// open the download page. Network errors are ignored. The user always chooses.
-func MaybeOffer(ctx context.Context, current string, in io.Reader, out io.Writer, log *slog.Logger) {
+// Asset is a single downloadable release file.
+type Asset struct {
+	Name string `json:"name"`
+	URL  string `json:"browser_download_url"`
+}
+
+// MaybeAuto checks GitHub for a newer release and, when found, downloads it,
+// verifies its sha256 checksum and replaces the running executable on disk.
+// It returns the new version and the caller should restart into it.
+// An unreachable GitHub or an up-to-date binary yields ("", nil); a failed
+// download or installation yields an error and the old binary keeps running.
+func MaybeAuto(ctx context.Context, current string, log *slog.Logger) (string, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 	if !checkable(current) {
-		return
+		return "", nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate the running executable: %w", err)
+	}
+	return apply(ctx, current, exe, log)
+}
+
+// apply is MaybeAuto against an explicit executable path (testable).
+func apply(ctx context.Context, current, exe string, log *slog.Logger) (string, error) {
+	if log == nil {
+		log = slog.Default()
+	}
+	if !checkable(current) {
+		return "", nil
 	}
 
 	fetchCtx, cancel := context.WithTimeout(ctx, checkTimeout)
@@ -42,30 +64,26 @@ func MaybeOffer(ctx context.Context, current string, in io.Reader, out io.Writer
 	cancel()
 	if err != nil {
 		log.Debug("update check skipped", "err", err)
-		return
+		return "", nil
 	}
 	if !newer(rel.TagName, current) {
-		return
+		return "", nil
 	}
 
-	log.Info("update available",
-		"current", current,
-		"latest", rel.TagName,
-		"url", rel.HTMLURL,
-	)
-	if !isTerminal(in) {
-		return
-	}
+	log.Info("update available", "current", current, "latest", rel.TagName, "url", rel.HTMLURL)
 
-	fmt.Fprintf(out, "Open the GitHub download page? [y/N] ")
-	if !wantsDownload(readLine(in)) {
-		return
+	if err := ensureWritable(filepath.Dir(exe)); err != nil {
+		return "", err
 	}
-	if err := opener(rel.HTMLURL); err != nil {
-		log.Warn("could not open browser", "err", err, "url", rel.HTMLURL)
-		return
+	newBin, err := downloadUpdate(ctx, rel, log)
+	if err != nil {
+		return "", err
 	}
-	log.Info("opened GitHub release page — this process keeps running")
+	if err := replace(exe, newBin); err != nil {
+		return "", err
+	}
+	log.Info("update installed", "version", rel.TagName)
+	return rel.TagName, nil
 }
 
 func fetchLatest(ctx context.Context) (Release, error) {
@@ -137,33 +155,4 @@ func versionParts(v string) []int {
 		out = append(out, n)
 	}
 	return out
-}
-
-func wantsDownload(s string) bool {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "y", "yes":
-		return true
-	default:
-		return false
-	}
-}
-
-func readLine(in io.Reader) string {
-	line, err := bufio.NewReader(in).ReadString('\n')
-	if err != nil && line == "" {
-		return ""
-	}
-	return line
-}
-
-func isTerminal(in io.Reader) bool {
-	f, ok := in.(*os.File)
-	if !ok {
-		return true
-	}
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
 }
