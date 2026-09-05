@@ -43,14 +43,14 @@
 
 Когда матч в PUBG закончился, кнопка **Exit to Lobby** часто оставляет игру на чёрном экране на 1–2 минуты. На практике это выглядит как «зависание», но процесс жив: клиент ждёт закрытия TCP-соединения, которое вовремя не рвётся.
 
-**pubg-lobby-fix** находит сокеты `TslGame` и удаляет их через Windows IP Helper API (`SetTcpEntry` → `DELETE_TCB`).
+**pubg-lobby-fix** находит сокеты `TslGame` и удаляет их через Windows IP Helper API (`SetTcpEntry` → `DELETE_TCB`), затем проверяет результат; для соединений, которые `SetTcpEntry` удалить не может (например IPv6 — публичного API удаления для них нет), применяется короткая блокировка всего трафика игры через Windows Filtering Platform.
 
 ---
 
 ## 🚀 Быстрый старт
 
 > [!IMPORTANT]
-> Запускай **от имени администратора**. Без elevation `SetTcpEntry` почти всегда завершается ошибкой доступа.
+> Для закрытия сокетов нужны **права администратора**. Если утилита запущена без них, она сама перезапустится через UAC-запрос (отключается флагом `-no-elevate`).
 
 ### 1. Скачай релиз
 
@@ -75,7 +75,6 @@
 
 ```text
 level=INFO msg="waiting for hotkey" hotkey=ctrl+shift+l processes=TslGame
-level=INFO msg="run as administrator — SetTcpEntry needs elevation"
 ```
 
 ### 3. В матче
@@ -110,13 +109,13 @@ level=INFO msg="run as administrator — SetTcpEntry needs elevation"
 
 | Шаг | Что делает программа | WinAPI / пакет |
 | --- | -------------------- | -------------- |
-| 1 | Ищет процессы `TslGame` | Toolhelp32 (`internal/process`) |
-| 2 | Читает таблицу TCP с PID | `GetExtendedTcpTable` (`internal/tcp`) |
-| 3 | Отфильтровывает соединения с remote ≠ `0.0.0.0` | — |
-| 4 | Для каждого сокета выставляет состояние `DELETE_TCB` | `SetTcpEntry` (`internal/tcp`) |
+| 1 | Ищет процессы `TslGame` и их исполняемые файлы | Toolhelp32 (`internal/process`) |
+| 2 | Читает TCP-таблицы **IPv4 и IPv6** с PID | `GetExtendedTcpTable` (`internal/tcp`) |
+| 3 | Удаляет живые IPv4 control blocks (`DELETE_TCB`), перечитывает таблицу и в несколько раундов повторяет для «выживших» | `SetTcpEntry` (`internal/tcp`) |
+| 4 | Если что-то выжило (для IPv6 API удаления нет), ненадолго блокирует **весь** трафик игры через WFP-фильтры, которые исчезают вместе с утилитой даже при падении | `FwpmFilterAdd0` в dynamic-сессии (`internal/wfp`) |
 | 5 | Триггер — глобальный хоткей Windows | `RegisterHotKey` (`internal/hotkey`) |
 
-Процесс игры **не убивается**. Рвутся только TCP control blocks выбранного процесса — клиент сам обрабатывает обрыв и уходит в лобби.
+Процесс игры **не убивается**. Рвутся только TCP control blocks выбранного процесса (либо его трафик кратко блокируется) — клиент сам обрабатывает обрыв и уходит в лобби.
 
 ---
 
@@ -125,7 +124,7 @@ level=INFO msg="run as administrator — SetTcpEntry needs elevation"
 | | |
 | -- | -- |
 | ОС | **Windows 10 / 11** only (нужны `iphlpapi.dll`, `user32.dll`) |
-| Права | Администратор (для `SetTcpEntry`) |
+| Права | Администратор (запрашивается автоматически через UAC) |
 | Игра | Запущенный клиент PUBG (`TslGame.exe`) |
 | Сборка | Go **1.27+** (только если собираешь сам) |
 
@@ -163,7 +162,10 @@ pubg-lobby-fix [flags]
 | ---- | ------------ | -------- |
 | `-hotkey` | `ctrl+shift+l` | Глобальный хоткей |
 | `-process` | `TslGame` | Имена процессов через запятую (без `.exe`) |
-| `-pause` | `100ms` | Пауза между вызовами `SetTcpEntry` |
+| `-pause` | `25ms` | Пауза между вызовами `SetTcpEntry` |
+| `-rounds` | `4` | Раунды «закрыть + проверить» до отката к блокировке трафика |
+| `-block` | `10s` | WFP-фолбэк: блокировать весь трафик игры это время, если соединения выжили (`0` — отключить) |
+| `-no-elevate` | `false` | Не перезапускать себя с правами администратора |
 | `-once` | `false` | Закрыть соединения один раз и выйти |
 | `-list` | `false` | Только показать сокеты, не закрывать |
 | `-version` | — | Версия / commit / дата сборки |
@@ -216,7 +218,7 @@ go test -shuffle=on ./...
 go install github.com/suprunchuk/pubg-lobby-fix@latest
 ```
 
-Бинарник попадёт в `%USERPROFILE%\go\bin` (добавь каталог в `PATH`). Запуск всё равно нужен **от администратора**.
+Бинарник попадёт в `%USERPROFILE%\go\bin` (добавь каталог в `PATH`). Права администратора утилита запросит сама через UAC.
 
 ### Структура репозитория
 
@@ -224,8 +226,10 @@ go install github.com/suprunchuk/pubg-lobby-fix@latest
 pubg-lobby-fix/
 ├── main.go                 # CLI, флаги, version ldflags
 ├── internal/
-│   ├── app/                # оркестрация: hotkey → list → close
-│   ├── tcp/                # GetExtendedTcpTable + SetTcpEntry
+│   ├── app/                # оркестрация: hotkey → list → close → verify
+│   ├── tcp/                # GetExtendedTcpTable (v4+v6) + SetTcpEntry
+│   ├── wfp/                # WFP-фолбэк: блокировка трафика в dynamic-сессии
+│   ├── elevate/            # проверка прав + перезапуск через UAC
 │   ├── process/            # поиск PID по имени
 │   └── hotkey/             # RegisterHotKey + message loop
 ├── LEGACY_DOT_NET/         # исходный C#/WPF прототип
@@ -245,13 +249,18 @@ pubg-lobby-fix/
                     ┌─────────────┐     Toolhelp32
                     │     app     │◄──────────────── process names
                     └──────┬──────┘
-              list │       │ close
+              list │       │ close + verify rounds
                    ▼       ▼
-              ┌──────────────────────────┐
-              │        tcp               │
-              │  GetExtendedTcpTable     │
-              │  SetTcpEntry(DELETE_TCB) │
-              └──────────────────────────┘
+              ┌──────────────────────────┐    выжившие?
+              │        tcp               │────────────┐
+              │  GetExtendedTcpTable     │            │
+              │  SetTcpEntry(DELETE_TCB) │            ▼
+              └──────────────────────────┘  ┌──────────────────┐
+                                            │       wfp        │
+                                            │ dynamic-сессия:  │
+                                            │ блокируем exe    │
+                                            │ игры на секунды  │
+                                            └──────────────────┘
 ```
 
 Пакеты не экспортируются наружу (`internal/`) — это приложение, не библиотека.

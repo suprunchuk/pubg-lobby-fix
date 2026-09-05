@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/suprunchuk/pubg-lobby-fix/internal/app"
+	"github.com/suprunchuk/pubg-lobby-fix/internal/elevate"
 	"github.com/suprunchuk/pubg-lobby-fix/internal/update"
 )
 
@@ -29,7 +30,10 @@ func run() int {
 	var (
 		hotkey      = flag.String("hotkey", "ctrl+shift+l", "global hotkey (e.g. ctrl+shift+l, f9, alt+f10)")
 		process     = flag.String("process", "TslGame", "comma-separated process names without .exe")
-		pause       = flag.Duration("pause", 100*time.Millisecond, "delay between SetTcpEntry calls")
+		pause       = flag.Duration("pause", 25*time.Millisecond, "delay between SetTcpEntry calls")
+		rounds      = flag.Int("rounds", 4, "close+verify rounds before falling back to a traffic block")
+		block       = flag.Duration("block", 10*time.Second, "WFP fallback: block all game traffic for this long when some connections survive (0 disables)")
+		noElevate   = flag.Bool("no-elevate", false, "do not relaunch with administrator rights")
 		once        = flag.Bool("once", false, "close connections once and exit")
 		list        = flag.Bool("list", false, "list TslGame TCP connections and exit")
 		verbose     = flag.Bool("v", false, "verbose (debug) logging")
@@ -49,11 +53,24 @@ func run() int {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(log)
 
+	// SetTcpEntry is rejected without elevation, so ask for it up front.
+	// The elevated copy takes over and this process exits.
+	if !*noElevate && !*list && !elevate.IsElevated() {
+		log.Info("not running as administrator — requesting elevation, confirm the UAC prompt")
+		if err := elevate.RelaunchAsAdmin(os.Args); err != nil {
+			log.Warn("could not elevate; closing sockets will fail", "err", err)
+		} else {
+			return 0
+		}
+	}
+
 	names := splitCSV(*process)
 	cfg := app.Config{
 		ProcessNames: names,
 		Hotkey:       *hotkey,
 		Pause:        *pause,
+		Rounds:       *rounds,
+		BlockWindow:  *block,
 		Once:         *once,
 		ListOnly:     *list,
 	}
@@ -106,7 +123,10 @@ Examples:
   pubg-lobby-fix -once                # close now and exit
   pubg-lobby-fix -list                # show current TslGame connections
 
-Requires administrator privileges for SetTcpEntry to succeed.
+Closing sockets needs administrator rights: the tool relaunches itself
+elevated through UAC unless -no-elevate is given. Connections that survive
+SetTcpEntry (e.g. IPv6) are handled by a short full-traffic block of the
+game executables via the Windows Filtering Platform.
 `)
 	}
 }

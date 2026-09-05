@@ -43,14 +43,14 @@
 
 When a PUBG match ends, **Exit to Lobby** often leaves you on a black screen for 1–2 minutes. It looks like a hang, but the process is still running: the client is waiting for a TCP connection that never closes cleanly.
 
-**pubg-lobby-fix** finds `TslGame` sockets and removes them via the Windows IP Helper API (`SetTcpEntry` → `DELETE_TCB`).
+**pubg-lobby-fix** finds `TslGame` sockets and removes them via the Windows IP Helper API (`SetTcpEntry` → `DELETE_TCB`), verifies the result, and falls back to a short Windows Filtering Platform traffic block for anything `SetTcpEntry` cannot delete (e.g. IPv6 sockets, which have no public delete API).
 
 ---
 
 ## 🚀 Quick start
 
 > [!IMPORTANT]
-> Run **as Administrator**. Without elevation, `SetTcpEntry` almost always fails with an access error.
+> Closing sockets needs **administrator** rights. If you start the tool unelevated, it relaunches itself through a UAC prompt automatically (opt out with `-no-elevate`).
 
 ### 1. Download a release
 
@@ -110,13 +110,13 @@ Stop the tool with `Ctrl+C` in the console window.
 
 | Step | What the program does | WinAPI / package |
 | ---- | --------------------- | ---------------- |
-| 1 | Finds `TslGame` processes | Toolhelp32 (`internal/process`) |
-| 2 | Reads the TCP table with PIDs | `GetExtendedTcpTable` (`internal/tcp`) |
-| 3 | Keeps connections whose remote ≠ `0.0.0.0` | — |
-| 4 | Sets each socket to `DELETE_TCB` | `SetTcpEntry` (`internal/tcp`) |
+| 1 | Finds `TslGame` processes and their executables | Toolhelp32 (`internal/process`) |
+| 2 | Reads the IPv4 **and** IPv6 TCP tables with PIDs | `GetExtendedTcpTable` (`internal/tcp`) |
+| 3 | Deletes each live IPv4 control block (`DELETE_TCB`), then re-reads the table and retries the survivors for a few rounds | `SetTcpEntry` (`internal/tcp`) |
+| 4 | If anything survives (IPv6 has no delete API), briefly blocks **all** game traffic via WFP filters that vanish when the tool exits, even on a crash | `FwpmFilterAdd0` in a dynamic session (`internal/wfp`) |
 | 5 | Trigger — global Windows hotkey | `RegisterHotKey` (`internal/hotkey`) |
 
-The game process is **not** killed. Only TCP control blocks for the selected process are torn down; the client handles the drop and returns to the lobby.
+The game process is **not** killed. Only TCP control blocks for the selected process are torn down (or its traffic is briefly blocked); the client handles the drop and returns to the lobby.
 
 ---
 
@@ -125,7 +125,7 @@ The game process is **not** killed. Only TCP control blocks for the selected pro
 | | |
 | -- | -- |
 | OS | **Windows 10 / 11** only (`iphlpapi.dll`, `user32.dll`) |
-| Privileges | Administrator (for `SetTcpEntry`) |
+| Privileges | Administrator (requested automatically via UAC) |
 | Game | Running PUBG client (`TslGame.exe`) |
 | Build | Go **1.27+** (only if you build yourself) |
 
@@ -163,7 +163,10 @@ pubg-lobby-fix [flags]
 | ---- | ------- | ----------- |
 | `-hotkey` | `ctrl+shift+l` | Global hotkey |
 | `-process` | `TslGame` | Comma-separated process names (no `.exe`) |
-| `-pause` | `100ms` | Delay between `SetTcpEntry` calls |
+| `-pause` | `25ms` | Delay between `SetTcpEntry` calls |
+| `-rounds` | `4` | Close + verify rounds before the traffic block fallback |
+| `-block` | `10s` | WFP fallback: block all game traffic for this long when some connections survive (`0` disables) |
+| `-no-elevate` | `false` | Do not relaunch with administrator rights |
 | `-once` | `false` | Close connections once and exit |
 | `-list` | `false` | List sockets only; do not close |
 | `-version` | — | Version / commit / build date |
@@ -216,7 +219,7 @@ go test -shuffle=on ./...
 go install github.com/suprunchuk/pubg-lobby-fix@latest
 ```
 
-The binary lands in `%USERPROFILE%\go\bin` (add that folder to `PATH`). You still need to run it **as Administrator**.
+The binary lands in `%USERPROFILE%\go\bin` (add that folder to `PATH`). The tool requests administrator rights itself via UAC.
 
 ### Repository layout
 
@@ -224,8 +227,10 @@ The binary lands in `%USERPROFILE%\go\bin` (add that folder to `PATH`). You stil
 pubg-lobby-fix/
 ├── main.go                 # CLI, flags, version ldflags
 ├── internal/
-│   ├── app/                # orchestration: hotkey → list → close
-│   ├── tcp/                # GetExtendedTcpTable + SetTcpEntry
+│   ├── app/                # orchestration: hotkey → list → close → verify
+│   ├── tcp/                # GetExtendedTcpTable (v4+v6) + SetTcpEntry
+│   ├── wfp/                # WFP dynamic-session traffic block fallback
+│   ├── elevate/            # elevation check + UAC relaunch
 │   ├── process/            # PID lookup by name
 │   └── hotkey/             # RegisterHotKey + message loop
 ├── LEGACY_DOT_NET/         # original C#/WPF prototype
@@ -245,13 +250,18 @@ pubg-lobby-fix/
                     ┌─────────────┐     Toolhelp32
                     │     app     │◄──────────────── process names
                     └──────┬──────┘
-              list │       │ close
+              list │       │ close + verify rounds
                    ▼       ▼
-              ┌──────────────────────────┐
-              │        tcp               │
-              │  GetExtendedTcpTable     │
-              │  SetTcpEntry(DELETE_TCB) │
-              └──────────────────────────┘
+              ┌──────────────────────────┐    survivors?
+              │        tcp               │────────────┐
+              │  GetExtendedTcpTable     │            │
+              │  SetTcpEntry(DELETE_TCB) │            ▼
+              └──────────────────────────┘  ┌──────────────────┐
+                                            │       wfp        │
+                                            │ dynamic session: │
+                                            │ block game exe   │
+                                            │ for a few secs   │
+                                            └──────────────────┘
 ```
 
 Packages live under `internal/` — this is an application, not a public library.
