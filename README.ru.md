@@ -9,7 +9,7 @@
 
 **Языки:** [English](./README.md) · Русский
 
-> CLI-утилита для Windows: принудительно закрывает TCP-сокеты процесса `TslGame` (PUBG), чтобы пропустить чёрный экран на 1–2 минуты при выходе в лобби после матча.
+> Утилита для Windows, живущая в системном трее: принудительно закрывает TCP-сокеты процесса `TslGame` (PUBG), чтобы пропустить чёрный экран на 1–2 минуты при выходе в лобби после матча. Клик по иконке закрывает сокеты, уведомление показывает результат.
 
 <p align="center">
   <a href="#-быстрый-старт"><strong>Скачать и запустить</strong></a>
@@ -74,19 +74,21 @@
 .\pubg-lobby-fix.exe
 ```
 
-Утилита ждёт глобальный хоткей **`Ctrl+Shift+L`**. В консоли будет лог вида:
+Утилита живёт в **системном трее** (зелёная иконка с молнией) и ждёт глобальный хоткей **`Ctrl+Shift+L`**. При запуске напрямую (двойной клик или UAC-перезапуск) окно консоли скрывается; с `-no-tray` утилита остаётся обычным консольным приложением. Лог в консоли выглядит так:
 
 ```text
-level=INFO msg="waiting for hotkey" hotkey=ctrl+shift+l processes=TslGame
+time="2026-09-05 18:12:03" level=INFO msg="waiting for hotkey" hotkey=ctrl+shift+l processes=TslGame
+time="2026-09-05 18:14:11" level=INFO msg="hotkey pressed, closing lobby connections"
+time="2026-09-05 18:14:12" level=INFO msg=done closed=7 already_gone=0 failed=0 survived=0
 ```
 
 ### 3. В матче
 
 1. Матч окончен → нажал **Exit to Lobby**.
-2. Нажал **`Ctrl+Shift+L`** (или свой хоткей).
-3. Смотри лог: `closed` / `done` — чёрный экран обычно пропадает сразу.
+2. Нажал **`Ctrl+Shift+L`** (или свой хоткей) — либо кликнул левой кнопкой по иконке в трее.
+3. Windows-уведомление покажет результат (`Sockets closed`, `Nothing to close`, …) — чёрный экран обычно пропадает сразу.
 
-Остановка: `Ctrl+C` в окне консоли.
+Остановка: пункт **Exit** в меню иконки трея или `Ctrl+C` в окне консоли.
 
 <details>
 <summary><strong>Одноразовый режим</strong> (закрыть сокеты и выйти)</summary>
@@ -116,7 +118,7 @@ level=INFO msg="waiting for hotkey" hotkey=ctrl+shift+l processes=TslGame
 | 2 | Читает TCP-таблицы **IPv4 и IPv6** с PID | `GetExtendedTcpTable` (`internal/tcp`) |
 | 3 | Удаляет живые IPv4 control blocks (`DELETE_TCB`), перечитывает таблицу и в несколько раундов повторяет для «выживших» | `SetTcpEntry` (`internal/tcp`) |
 | 4 | Если что-то выжило (для IPv6 API удаления нет), ненадолго блокирует **весь** трафик игры через WFP-фильтры, которые исчезают вместе с утилитой даже при падении | `FwpmFilterAdd0` в dynamic-сессии (`internal/wfp`) |
-| 5 | Триггер — глобальный хоткей Windows | `RegisterHotKey` (`internal/hotkey`) |
+| 5 | Триггер — глобальный хоткей Windows или клик по иконке в трее | `RegisterHotKey` (`internal/hotkey`), `Shell_NotifyIconW` (`internal/tray`) |
 
 Процесс игры **не убивается**. Рвутся только TCP control blocks выбранного процесса (либо его трафик кратко блокируется) — клиент сам обрабатывает обрыв и уходит в лобби.
 
@@ -142,7 +144,7 @@ Linux и macOS не поддерживаются: на них нет нужно�
 │  1. Запусти pubg-lobby-fix.exe от администратора        │
 │  2. Играй как обычно                                    │
 │  3. Конец матча → Exit to Lobby → чёрный экран          │
-│  4. Нажми Ctrl+Shift+L                                  │
+│  4. Нажми Ctrl+Shift+L (или кликни иконку в трее)       │
 │  5. Лобби без долгого ожидания                          │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -170,8 +172,10 @@ pubg-lobby-fix [flags]
 | `-block` | `10s` | WFP-фолбэк: блокировать весь трафик игры это время, если соединения выжили (`0` — отключить) |
 | `-no-elevate` | `false` | Не перезапускать себя с правами администратора |
 | `-no-update` | `false` | Отключить автообновление при запуске |
+| `-no-tray` | `false` | Не показывать иконку в трее; оставить окно консоли |
 | `-once` | `false` | Закрыть соединения один раз и выйти |
 | `-list` | `false` | Только показать сокеты, не закрывать |
+| `-json` | `false` | Вместе с `-list`: вывести соединения в JSON на stdout (логи уходят в stderr) |
 | `-version` | — | Версия / commit / дата сборки |
 | `-v` | `false` | Debug-логи (`slog`) |
 | `-h` | — | Справка |
@@ -187,6 +191,9 @@ pubg-lobby-fix [flags]
 
 # Диагностика
 .\pubg-lobby-fix.exe -list -v
+
+# Список соединений в JSON для скриптов
+.\pubg-lobby-fix.exe -list -json
 
 # Версия из релиза
 .\pubg-lobby-fix.exe -version
@@ -230,13 +237,13 @@ go install github.com/suprunchuk/pubg-lobby-fix@latest
 pubg-lobby-fix/
 ├── main.go                 # CLI, флаги, version ldflags
 ├── internal/
-│   ├── app/                # оркестрация: hotkey → list → close → verify
+│   ├── app/                # оркестрация: hotkey/tray → list → close → verify
 │   ├── tcp/                # GetExtendedTcpTable (v4+v6) + SetTcpEntry
 │   ├── wfp/                # WFP-фолбэк: блокировка трафика в dynamic-сессии
 │   ├── elevate/            # проверка прав + перезапуск через UAC
 │   ├── process/            # поиск PID по имени
-│   └── hotkey/             # RegisterHotKey + message loop
-├── LEGACY_DOT_NET/         # исходный C#/WPF прототип
+│   ├── hotkey/             # RegisterHotKey + message loop
+│   └── tray/               # Shell_NotifyIcon: иконка, меню, уведомления
 └── .github/workflows/      # test, security, release
 ```
 
@@ -297,7 +304,7 @@ Dependabot раз в неделю обновляет Go-модули и GitHub A
 Базовый цикл:
 
 ```powershell
-go test -race ./...
+go test -shuffle=on ./...
 go build -o pubg-lobby-fix.exe .
 ```
 

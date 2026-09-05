@@ -2,10 +2,14 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -13,6 +17,7 @@ import (
 	"github.com/suprunchuk/pubg-lobby-fix/internal/hotkey"
 	"github.com/suprunchuk/pubg-lobby-fix/internal/process"
 	"github.com/suprunchuk/pubg-lobby-fix/internal/tcp"
+	"github.com/suprunchuk/pubg-lobby-fix/internal/tray"
 	"github.com/suprunchuk/pubg-lobby-fix/internal/wfp"
 )
 
@@ -29,6 +34,11 @@ type Config struct {
 	BlockWindow time.Duration
 	Once        bool
 	ListOnly    bool
+	// JSON makes -list print connections as JSON to stdout.
+	JSON bool
+	// Tray shows the notification-area icon and hides the console window.
+	// Only used in monitor mode (-once and -list print to the console).
+	Tray bool
 }
 
 // verifyDelay is how long to wait after a close round before re-reading the
@@ -54,7 +64,8 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		return listConnections(cfg, log)
 	}
 	if cfg.Once {
-		return closeLobby(ctx, cfg, log)
+		_, err := closeLobby(ctx, cfg, log)
+		return err
 	}
 
 	binding, err := hotkey.Parse(cfg.Hotkey)
@@ -69,12 +80,29 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 
 	presses := make(chan struct{}, 1)
 	errCh := make(chan error, 1)
+	trayDone := make(chan error, 1)
 
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		errCh <- hotkey.Listen(ctx, binding, presses)
 	}()
+
+	// The tray icon mirrors the hotkey: a left click or the menu item feeds
+	// the same presses channel, so the busy guard covers both triggers.
+	if cfg.Tray {
+		go func() {
+			trayDone <- tray.Run(ctx, tray.Options{
+				Tooltip: "pubg-lobby-fix — " + binding.Display,
+				OnTrigger: func() {
+					select {
+					case presses <- struct{}{}:
+					default:
+					}
+				},
+			})
+		}()
+	}
 
 	var busy atomic.Bool
 
@@ -88,6 +116,16 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 				return err
 			}
 			return ctx.Err()
+		case err := <-trayDone:
+			switch {
+			case errors.Is(err, tray.ErrExitRequested):
+				log.Info("exit requested from the tray menu")
+				return nil
+			case err == nil || ctx.Err() != nil:
+				// The tray stopped because the app is stopping.
+			default:
+				log.Warn("tray icon is not available — keep the console window open", "err", err)
+			}
 		case <-presses:
 			if !busy.CompareAndSwap(false, true) {
 				log.Warn("already closing connections, ignoring hotkey")
@@ -95,12 +133,26 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 			}
 
 			log.Info("hotkey pressed, closing lobby connections")
-			if err := closeLobby(ctx, cfg, log); err != nil {
+			res, err := closeLobby(ctx, cfg, log)
+			if err != nil && ctx.Err() == nil {
 				log.Error("close failed", "err", err)
+			}
+			if title, body, warn := closeBalloon(res, err); title != "" {
+				tray.Notify(title, body, warn)
 			}
 			busy.Store(false)
 		}
 	}
+}
+
+// jsonConn is the JSON shape of one TCP connection for -list -json.
+type jsonConn struct {
+	PID     uint32 `json:"pid"`
+	Process string `json:"process"`
+	Family  string `json:"family"`
+	Local   string `json:"local"`
+	Remote  string `json:"remote"`
+	State   string `json:"state"`
 }
 
 func listConnections(cfg Config, log *slog.Logger) error {
@@ -109,6 +161,22 @@ func listConnections(cfg Config, log *slog.Logger) error {
 		return err
 	}
 	logWarnings(log, errs)
+	if cfg.JSON {
+		out := make([]jsonConn, 0, len(conns))
+		for _, c := range conns {
+			out = append(out, jsonConn{
+				PID:     c.PID,
+				Process: c.ProcessName,
+				Family:  c.Family.String(),
+				Local:   formatEndpoint(c.LocalAddr, c.LocalPort),
+				Remote:  formatEndpoint(c.RemoteAddr, c.RemotePort),
+				State:   c.State.String(),
+			})
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
+	}
 	if len(conns) == 0 {
 		log.Info("no connections found", "processes", cfg.ProcessNames)
 		return nil
@@ -121,16 +189,30 @@ func listConnections(cfg Config, log *slog.Logger) error {
 	return nil
 }
 
+func formatEndpoint(ip net.IP, port uint16) string {
+	return net.JoinHostPort(ip.String(), strconv.Itoa(int(port)))
+}
+
+// closeStats counts the outcomes of one closeLobby run.
+type closeStats struct {
+	// Closed are connections deleted by SetTcpEntry, Gone are ones that
+	// vanished between listing and closing.
+	Closed, Gone, Failed, Survived int
+	// Blocked reports that the WFP fallback was applied to clear survivors.
+	Blocked bool
+}
+
 // closeLobby kills every TCP connection owned by the game processes, with
 // verification and a fallback for connections SetTcpEntry cannot delete.
-func closeLobby(ctx context.Context, cfg Config, log *slog.Logger) error {
+// It stops early (returning ctx.Err()) when ctx is cancelled.
+func closeLobby(ctx context.Context, cfg Config, log *slog.Logger) (stats closeStats, err error) {
 	procs, err := process.FindByName(cfg.ProcessNames...)
 	if err != nil {
-		return fmt.Errorf("find processes: %w", err)
+		return stats, fmt.Errorf("find processes: %w", err)
 	}
 	if len(procs) == 0 {
 		log.Info("game is not running", "processes", cfg.ProcessNames)
-		return nil
+		return stats, nil
 	}
 
 	pids := make(map[uint32]string, len(procs))
@@ -158,32 +240,38 @@ func closeLobby(ctx context.Context, cfg Config, log *slog.Logger) error {
 	targets := snapshot()
 	if len(targets) == 0 {
 		log.Info("no closeable lobby connections", "processes", cfg.ProcessNames)
-		return nil
+		return stats, nil
 	}
 
-	var closed, gone, failed int
 	var accessDenied bool
 	var survivors []tcp.Connection
 
 	for round := 1; ; round++ {
+		if err := ctx.Err(); err != nil {
+			return stats, err
+		}
 		log.Info("closing lobby connections", "round", round, "count", len(targets))
 		for _, r := range tcp.CloseAll(v4Only(targets), cfg.Pause) {
 			switch {
 			case r.Err == nil:
-				closed++
+				stats.Closed++
 			case errors.Is(r.Err, tcp.ErrVanished):
-				gone++
+				stats.Gone++
 			case errors.Is(r.Err, tcp.ErrAccessDenied):
-				failed++
+				stats.Failed++
 				accessDenied = true
 				log.Warn("close failed (not elevated?)", "conn", r.Connection.String(), "err", r.Err)
 			default:
-				failed++
+				stats.Failed++
 				log.Warn("close failed", "conn", r.Connection.String(), "err", r.Err)
 			}
 		}
 
-		time.Sleep(verifyDelay)
+		select {
+		case <-ctx.Done():
+			return stats, ctx.Err()
+		case <-time.After(verifyDelay):
+		}
 		survivors = intersect(targets, snapshot())
 		if len(survivors) == 0 {
 			break
@@ -195,18 +283,19 @@ func closeLobby(ctx context.Context, cfg Config, log *slog.Logger) error {
 		targets = survivors
 	}
 
+	stats.Survived = len(survivors)
 	log.Info("done",
-		"closed", closed,
-		"already_gone", gone,
-		"failed", failed,
-		"survived", len(survivors),
+		"closed", stats.Closed,
+		"already_gone", stats.Gone,
+		"failed", stats.Failed,
+		"survived", stats.Survived,
 	)
 
 	if len(survivors) == 0 {
-		if accessDenied && closed == 0 && gone == 0 {
-			return errors.New("every SetTcpEntry call was denied — run as administrator")
+		if accessDenied && stats.Closed == 0 && stats.Gone == 0 {
+			return stats, errors.New("every SetTcpEntry call was denied — run as administrator")
 		}
-		return nil
+		return stats, nil
 	}
 
 	// Fallback: SetTcpEntry cannot delete IPv6 TCBs (no public API) and a
@@ -219,23 +308,53 @@ func closeLobby(ctx context.Context, cfg Config, log *slog.Logger) error {
 	case err != nil:
 		log.Error("traffic block failed", "err", err)
 	case blocked:
+		stats.Blocked = true
 		still := intersect(targets, snapshot())
 		if len(still) == 0 {
 			log.Info("traffic block cleared the remaining connections")
 			resolvedByBlock = true
+			stats.Survived = 0
 		} else {
 			log.Warn("connections still present after the traffic block", "count", len(still))
 		}
 	}
 
-	if closed+gone == 0 && !resolvedByBlock {
+	if stats.Closed+stats.Gone == 0 && !resolvedByBlock {
 		hint := ""
 		if accessDenied {
 			hint = " (run as administrator)"
 		}
-		return fmt.Errorf("could not close %d connection(s)%s", len(targets), hint)
+		return stats, fmt.Errorf("could not close %d connection(s)%s", len(targets), hint)
 	}
-	return nil
+	return stats, nil
+}
+
+// closeBalloon turns a closeLobby outcome into a tray balloon; an empty title
+// means there is nothing to report (tray inactive or the run was cancelled).
+func closeBalloon(res closeStats, err error) (title, body string, warn bool) {
+	if errors.Is(err, context.Canceled) {
+		return "", "", false
+	}
+	if err != nil {
+		return "Close failed", err.Error(), true
+	}
+	if res.Closed == 0 && res.Gone == 0 && !res.Blocked {
+		return "Nothing to close", "no open game connections right now", false
+	}
+	var parts []string
+	if res.Closed > 0 {
+		parts = append(parts, fmt.Sprintf("closed %d", res.Closed))
+	}
+	if res.Gone > 0 {
+		parts = append(parts, fmt.Sprintf("%d already gone", res.Gone))
+	}
+	if res.Failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed", res.Failed))
+	}
+	if res.Blocked {
+		parts = append(parts, "traffic blocked briefly")
+	}
+	return "Sockets closed", strings.Join(parts, ", "), res.Failed > 0
 }
 
 // blockGameTraffic applies the WFP fallback to every known game executable.

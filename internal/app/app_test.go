@@ -1,7 +1,10 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/suprunchuk/pubg-lobby-fix/internal/tcp"
@@ -58,5 +61,42 @@ func TestV4OnlyAndAllIPv6(t *testing.T) {
 	}
 	if allIPv6(nil) {
 		t.Fatal("empty set must not be all-IPv6")
+	}
+}
+
+func TestCloseBalloon(t *testing.T) {
+	title, body, warn := closeBalloon(closeStats{Closed: 3}, nil)
+	if title != "Sockets closed" || warn || !strings.Contains(body, "closed 3") {
+		t.Fatalf("success: got (%q, %q, %v)", title, body, warn)
+	}
+
+	_, body, warn = closeBalloon(closeStats{Closed: 1, Gone: 2, Failed: 4}, nil)
+	if !warn {
+		t.Fatal("failures must set warn")
+	}
+	for _, want := range []string{"closed 1", "2 already gone", "4 failed"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body %q must contain %q", body, want)
+		}
+	}
+
+	_, body, warn = closeBalloon(closeStats{Blocked: true}, nil)
+	if warn || !strings.Contains(body, "blocked") {
+		t.Fatalf("block fallback: got (%q, %v)", body, warn)
+	}
+
+	title, _, _ = closeBalloon(closeStats{}, nil)
+	if title != "Nothing to close" {
+		t.Fatalf("empty run: title %q", title)
+	}
+
+	title, body, warn = closeBalloon(closeStats{}, errors.New("boom"))
+	if title != "Close failed" || !warn || body != "boom" {
+		t.Fatalf("error: got (%q, %q, %v)", title, body, warn)
+	}
+
+	// A cancelled run must stay silent.
+	if title, _, _ = closeBalloon(closeStats{Closed: 1}, context.Canceled); title != "" {
+		t.Fatalf("cancelled run must produce no balloon, got %q", title)
 	}
 }

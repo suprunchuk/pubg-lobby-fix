@@ -35,8 +35,10 @@ func run() int {
 		block       = flag.Duration("block", 10*time.Second, "WFP fallback: block all game traffic for this long when some connections survive (0 disables)")
 		noElevate   = flag.Bool("no-elevate", false, "do not relaunch with administrator rights")
 		noUpdate    = flag.Bool("no-update", false, "disable automatic self-update")
+		noTray      = flag.Bool("no-tray", false, "do not show the tray icon; keep the console window")
 		once        = flag.Bool("once", false, "close connections once and exit")
 		list        = flag.Bool("list", false, "list TslGame TCP connections and exit")
+		jsonOut     = flag.Bool("json", false, "with -list: print connections as JSON to stdout (logs go to stderr)")
 		verbose     = flag.Bool("v", false, "verbose (debug) logging")
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
@@ -51,6 +53,11 @@ func run() int {
 	if *verbose {
 		level = slog.LevelDebug
 	}
+	// With -list -json the JSON is the stdout contract; keep logs on stderr.
+	logOut := os.Stdout
+	if *list && *jsonOut {
+		logOut = os.Stderr
+	}
 	// Log timestamps like "2026-09-05 12:42:53" — the RFC3339 default is
 	// noisy, and a raw "+03:00" offset scares non-developers.
 	logTime := func(groups []string, a slog.Attr) slog.Attr {
@@ -61,7 +68,7 @@ func run() int {
 		}
 		return a
 	}
-	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level, ReplaceAttr: logTime}))
+	log := slog.New(slog.NewTextHandler(logOut, &slog.HandlerOptions{Level: level, ReplaceAttr: logTime}))
 	slog.SetDefault(log)
 
 	// Remove the binary a previous self-update renamed out of the way.
@@ -87,6 +94,8 @@ func run() int {
 		BlockWindow:  *block,
 		Once:         *once,
 		ListOnly:     *list,
+		JSON:         *jsonOut,
+		Tray:         !*noTray,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -143,15 +152,21 @@ Flags:
 		flag.PrintDefaults()
 		_, _ = fmt.Fprintf(out, `
 Examples:
-  pubg-lobby-fix                      # wait for Ctrl+Shift+L
+  pubg-lobby-fix                      # tray icon, wait for Ctrl+Shift+L
   pubg-lobby-fix -hotkey f9           # use F9 instead
+  pubg-lobby-fix -no-tray             # keep the console window instead of the tray icon
   pubg-lobby-fix -once                # close now and exit
   pubg-lobby-fix -list                # show current TslGame connections
+  pubg-lobby-fix -list -json          # same, as JSON for scripts
 
 Closing sockets needs administrator rights: the tool relaunches itself
 elevated through UAC unless -no-elevate is given. Connections that survive
 SetTcpEntry (e.g. IPv6) are handled by a short full-traffic block of the
 game executables via the Windows Filtering Platform.
+
+In monitor mode the tool lives in the system tray: left click closes the
+connections, a notification reports the result, the menu has Exit
+(disable with -no-tray to keep the console window).
 
 On start the tool downloads and installs newer releases by itself
 (disable with -no-update).

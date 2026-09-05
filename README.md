@@ -9,7 +9,7 @@
 
 **Languages:** English · [Русский](./README.ru.md)
 
-> Windows CLI that force-closes `TslGame` (PUBG) TCP sockets so you can skip the 1–2 minute black screen when returning to the lobby after a match.
+> Windows tray tool that force-closes `TslGame` (PUBG) TCP sockets so you can skip the 1–2 minute black screen when returning to the lobby after a match. It lives in the system tray: a click closes the sockets, a notification reports the result.
 
 <p align="center">
   <a href="#-quick-start"><strong>Download & run</strong></a>
@@ -74,20 +74,21 @@ Right-click `pubg-lobby-fix.exe` → **Run as administrator**, or from an elevat
 .\pubg-lobby-fix.exe
 ```
 
-The tool waits for the global hotkey **`Ctrl+Shift+L`**. Console output looks like:
+The tool lives in the **system tray** (a green icon with a lightning bolt) and waits for the global hotkey **`Ctrl+Shift+L`**. When started directly (double-click or the UAC relaunch), its console window is hidden — with `-no-tray` it stays a normal console app instead. Console output looks like:
 
 ```text
-level=INFO msg="waiting for hotkey" hotkey=ctrl+shift+l processes=TslGame
-level=INFO msg="run as administrator — SetTcpEntry needs elevation"
+time="2026-09-05 18:12:03" level=INFO msg="waiting for hotkey" hotkey=ctrl+shift+l processes=TslGame
+time="2026-09-05 18:14:11" level=INFO msg="hotkey pressed, closing lobby connections"
+time="2026-09-05 18:14:12" level=INFO msg=done closed=7 already_gone=0 failed=0 survived=0
 ```
 
 ### 3. During a match
 
 1. Match over → press **Exit to Lobby**.
-2. Press **`Ctrl+Shift+L`** (or your custom hotkey).
-3. Watch the log for `closed` / `done` — the black screen usually clears immediately.
+2. Press **`Ctrl+Shift+L`** (or your custom hotkey) — or left-click the tray icon.
+3. A Windows notification reports the result (`Sockets closed`, `Nothing to close`, …) — the black screen usually clears immediately.
 
-Stop the tool with `Ctrl+C` in the console window.
+Stop the tool from the tray icon menu (**Exit**) or with `Ctrl+C` in the console window.
 
 <details>
 <summary><strong>One-shot mode</strong> (close sockets and exit)</summary>
@@ -117,7 +118,7 @@ Stop the tool with `Ctrl+C` in the console window.
 | 2 | Reads the IPv4 **and** IPv6 TCP tables with PIDs | `GetExtendedTcpTable` (`internal/tcp`) |
 | 3 | Deletes each live IPv4 control block (`DELETE_TCB`), then re-reads the table and retries the survivors for a few rounds | `SetTcpEntry` (`internal/tcp`) |
 | 4 | If anything survives (IPv6 has no delete API), briefly blocks **all** game traffic via WFP filters that vanish when the tool exits, even on a crash | `FwpmFilterAdd0` in a dynamic session (`internal/wfp`) |
-| 5 | Trigger — global Windows hotkey | `RegisterHotKey` (`internal/hotkey`) |
+| 5 | Trigger — global Windows hotkey or a left click on the tray icon | `RegisterHotKey` (`internal/hotkey`), `Shell_NotifyIconW` (`internal/tray`) |
 
 The game process is **not** killed. Only TCP control blocks for the selected process are torn down (or its traffic is briefly blocked); the client handles the drop and returns to the lobby.
 
@@ -143,7 +144,7 @@ Linux and macOS are not supported — the required WinAPI is missing there.
 │  1. Start pubg-lobby-fix.exe as Administrator          │
 │  2. Play as usual                                       │
 │  3. Match end → Exit to Lobby → black screen            │
-│  4. Press Ctrl+Shift+L                                  │
+│  4. Press Ctrl+Shift+L (or click the tray icon)         │
 │  5. Lobby without the long wait                         │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -171,8 +172,10 @@ pubg-lobby-fix [flags]
 | `-block` | `10s` | WFP fallback: block all game traffic for this long when some connections survive (`0` disables) |
 | `-no-elevate` | `false` | Do not relaunch with administrator rights |
 | `-no-update` | `false` | Disable automatic self-update on start |
+| `-no-tray` | `false` | Do not show the tray icon; keep the console window |
 | `-once` | `false` | Close connections once and exit |
 | `-list` | `false` | List sockets only; do not close |
+| `-json` | `false` | With `-list`: print connections as JSON to stdout (logs go to stderr) |
 | `-version` | — | Version / commit / build date |
 | `-v` | `false` | Debug logs (`slog`) |
 | `-h` | — | Help |
@@ -188,6 +191,9 @@ pubg-lobby-fix [flags]
 
 # Diagnostics
 .\pubg-lobby-fix.exe -list -v
+
+# Machine-readable connection list for scripts
+.\pubg-lobby-fix.exe -list -json
 
 # Release version string
 .\pubg-lobby-fix.exe -version
@@ -231,13 +237,13 @@ The binary lands in `%USERPROFILE%\go\bin` (add that folder to `PATH`). The tool
 pubg-lobby-fix/
 ├── main.go                 # CLI, flags, version ldflags
 ├── internal/
-│   ├── app/                # orchestration: hotkey → list → close → verify
+│   ├── app/                # orchestration: hotkey/tray → list → close → verify
 │   ├── tcp/                # GetExtendedTcpTable (v4+v6) + SetTcpEntry
 │   ├── wfp/                # WFP dynamic-session traffic block fallback
 │   ├── elevate/            # elevation check + UAC relaunch
 │   ├── process/            # PID lookup by name
-│   └── hotkey/             # RegisterHotKey + message loop
-├── LEGACY_DOT_NET/         # original C#/WPF prototype
+│   ├── hotkey/             # RegisterHotKey + message loop
+│   └── tray/               # Shell_NotifyIcon: icon, menu, notifications
 └── .github/workflows/      # test, security, release
 ```
 
@@ -298,7 +304,7 @@ Dependabot updates Go modules and GitHub Actions weekly.
 Basic loop:
 
 ```powershell
-go test -race ./...
+go test -shuffle=on ./...
 go build -o pubg-lobby-fix.exe .
 ```
 
